@@ -1,0 +1,64 @@
+library(shiny)
+library(xlsx)
+library(RMySQL)
+ui<-fluidPage(
+  headerPanel(title = "Upload MAP File to Search Unity"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file", "Upload the File"),
+      downloadButton("downloadData", "Download")
+    ),
+    mainPanel(
+      tableOutput("input_file")
+    )
+  )
+)
+
+server<-function(input, output){
+  getData<-reactive({
+    inFile<-input$file
+    if(is.null(inFile)){
+      return()
+    }
+    
+    UPCs<-read.xlsx(inFile$datapath, sheetIndex = 1)
+    
+    UPCs[1]<-round(UPCs[1], digits = 0)
+    
+    inUPCs<-UPCs[1,1]
+    
+    for(i in 2:nrow(UPCs[1])){
+      inUPCs<-paste0(inUPCs,  "|", UPCs[i,1])
+    }
+    
+    colnames(UPCs)[1]<-"upc"
+    
+    unity = dbConnect(MySQL(), user='analyst', password='L!qu!d4m', dbname='unity', host='172.16.144.26')
+    
+    UnityData<-fetch(dbSendQuery(unity, paste0("Select p.upc, p.ca_sku, p.wholesale_price, p.map From products p
+                                               Where p.upc regexp('", inUPCs, "')")),n=-1)
+    
+    Merge<-merge(UPCs, UnityData, by = "upc", all.y = T)
+    
+    Merge<-unique(Merge)
+    
+    OutPut<-data.frame(SKU=Merge$ca_sku, 'Wholesale Cost'=Merge$wholesale_price, MAP=Merge$MAP, check.names = F)
+  }
+  )
+  
+  output$input_file<-renderTable(
+    getData()
+  )
+  
+  output$downloadData<-downloadHandler(
+    filename = function(){
+      paste0("Unity_MAP_Upload_", format(Sys.time(), "%Y-%m-%d_%H%M%S"), ".csv")
+    },
+    content = function(file){
+      write.csv(getData(), file, row.names = F)
+    }
+  )
+  
+}
+
+shinyApp(ui = ui, server = server)
